@@ -497,6 +497,18 @@ methodmap DiscordMessage < Handle
   public native void AddEmbed(DiscordEmbed embed);
 
   /**
+   * Adds a local file to this outgoing message.
+   *
+   * @param path       File path relative to the game directory.
+   * @param filename   Optional filename shown by Discord. If empty, the basename of path is used.
+   * @param mimetype   Optional MIME type. If empty, application/octet-stream is used.
+   * @return           True if the file was read and attached successfully.
+   * @note             Absolute paths and parent-directory traversal (..) are rejected.
+   * @note             This wrapper allows up to 10 files and 25 MiB total per message.
+   */
+  public native bool AddFile(const char[] path, const char[] filename = "", const char[] mimetype = "");
+
+  /**
    * Clears all embeds from this message
    */
   public native void ClearEmbeds();

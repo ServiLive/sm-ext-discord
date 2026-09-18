@@ -35,6 +35,8 @@ private:
 	DiscordClientRef m_client;
 	mutable CachedHandle<DiscordUser> m_authorHandle;
 	mutable CachedHandle<DiscordPoll> m_pollHandle;
+	size_t m_pendingUploadBytes = 0;
+	size_t m_pendingUploadCount = 0;
 
 public:
 	DiscordMessage(const dpp::message& msg, DiscordClient* client) : m_message(msg), m_client(client) {}
@@ -179,6 +181,18 @@ public:
 	}
 	void AddEmbed(const class DiscordEmbed* embed) {
 		if (embed) m_message.add_embed(embed->GetEmbed());
+	}
+	bool AddFile(const std::string& filename, const std::string& content, const std::string& mimetype) {
+		static constexpr size_t kMaxUploadFiles = 10;
+		static constexpr size_t kMaxUploadBytes = 25u * 1024u * 1024u;
+
+		if (filename.empty() || content.empty() || m_pendingUploadCount >= kMaxUploadFiles) return false;
+		if (content.size() > kMaxUploadBytes - m_pendingUploadBytes) return false;
+
+		m_message.add_file(filename, content, mimetype.empty() ? "application/octet-stream" : mimetype);
+		m_pendingUploadBytes += content.size();
+		m_pendingUploadCount++;
+		return true;
 	}
 	void ClearEmbeds() { m_message.embeds.clear(); }
 	void AddComponent(const class DiscordComponent* component);

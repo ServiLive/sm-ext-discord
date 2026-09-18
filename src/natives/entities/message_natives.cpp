@@ -26,6 +26,8 @@
 #include "utils/discord_component.h"
 #include "utils/discord_poll.h"
 
+#include <fstream>
+
 static cell_t message_CreateFromId(IPluginContext* pContext, const cell_t* params)
 {
 	DiscordClient* discord = Handles.GetPointer<DiscordClient>(pContext, params[1]);
@@ -698,6 +700,92 @@ static cell_t message_AddEmbed(IPluginContext* pContext, const cell_t* params)
 	return 1;
 }
 
+static bool IsSafeRelativeGamePath(const char* path)
+{
+	if (!path || !*path) return false;
+	if (path[0] == '/' || path[0] == '\\') return false;
+	if (path[0] && path[1] == ':') return false;
+
+	const char* part = path;
+	while (*part) {
+		while (*part == '/' || *part == '\\') part++;
+		if (!*part) break;
+
+		const char* end = part;
+		while (*end && *end != '/' && *end != '\\') end++;
+		if ((end - part) == 2 && part[0] == '.' && part[1] == '.') return false;
+		part = end;
+	}
+
+	return true;
+}
+
+static const char* GetPathBasename(const char* path)
+{
+	const char* basename = path;
+	for (const char* p = path; *p; p++) {
+		if (*p == '/' || *p == '\\') basename = p + 1;
+	}
+	return basename;
+}
+
+static cell_t message_AddFile(IPluginContext* pContext, const cell_t* params)
+{
+	DiscordMessage* message = Handles.GetPointer<DiscordMessage>(pContext, params[1]);
+	if (!message) return 0;
+
+	char* path;
+	char* filename;
+	char* mimetype;
+	if (pContext->LocalToString(params[2], &path) != SP_ERROR_NONE ||
+		pContext->LocalToString(params[3], &filename) != SP_ERROR_NONE ||
+		pContext->LocalToString(params[4], &mimetype) != SP_ERROR_NONE) {
+		pContext->ReportError("Invalid string parameter");
+		return 0;
+	}
+
+	if (!IsSafeRelativeGamePath(path)) {
+		pContext->ReportError("DiscordMessage.AddFile path must be relative to the game directory and may not contain '..': %s", path);
+		return 0;
+	}
+
+	char fullPath[PLATFORM_MAX_PATH];
+	g_pSM->BuildPath(Path_Game, fullPath, sizeof(fullPath), "%s", path);
+
+	std::ifstream file(fullPath, std::ios::binary | std::ios::ate);
+	if (!file.is_open()) {
+		pContext->ReportError("Could not open Discord upload file: %s", path);
+		return 0;
+	}
+
+	const std::streamoff size = file.tellg();
+	static constexpr std::streamoff kMaxFileBytes = 25 * 1024 * 1024;
+	if (size <= 0 || size > kMaxFileBytes) {
+		pContext->ReportError("Discord upload file must be between 1 byte and 25 MiB: %s", path);
+		return 0;
+	}
+
+	std::string content(static_cast<size_t>(size), '\0');
+	file.seekg(0, std::ios::beg);
+	if (!file.read(content.data(), size)) {
+		pContext->ReportError("Could not read Discord upload file: %s", path);
+		return 0;
+	}
+
+	const char* uploadName = (filename && *filename) ? filename : GetPathBasename(path);
+	if (!uploadName || !*uploadName || strchr(uploadName, '/') || strchr(uploadName, '\\')) {
+		pContext->ReportError("Invalid Discord upload filename: %s", uploadName ? uploadName : "(null)");
+		return 0;
+	}
+
+	if (!message->AddFile(uploadName, content, (mimetype && *mimetype) ? mimetype : "application/octet-stream")) {
+		pContext->ReportError("Could not attach %s: message would exceed 10 files or 25 MiB total", uploadName);
+		return 0;
+	}
+
+	return 1;
+}
+
 static cell_t message_SetAllowedMentions(IPluginContext* pContext, const cell_t* params)
 {
 	DiscordMessage* message = Handles.GetPointer<DiscordMessage>(pContext, params[1]);
@@ -865,6 +953,7 @@ extern const sp_nativeinfo_t message_natives[] = {
 	{"DiscordMessage.SetNonce", message_SetNonce},
 	{"DiscordMessage.SetAllowedMentions", message_SetAllowedMentions},
 	{"DiscordMessage.AddEmbed", message_AddEmbed},
+	{"DiscordMessage.AddFile", message_AddFile},
 	{"DiscordMessage.ClearEmbeds", message_ClearEmbeds},
 	{"DiscordMessage.AddComponent", message_AddComponent},
 	{"DiscordMessage.ClearComponents", message_ClearComponents},
